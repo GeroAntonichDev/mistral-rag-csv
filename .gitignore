@@ -1,0 +1,32 @@
+# Datos
+*.csv
+*.xlsx
+*.xls
+
+# ChromaDB vector store
+chroma_csv_db/
+chroma_*/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Notebook metadata
+.ipynb_checkpoints/
+*.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.envrc
+venv/
+.venv/
