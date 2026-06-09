@@ -465,3 +465,63 @@ Estructura: 1) Preprocesamiento, 2) Entrenamiento, 3) Resumen Ejecutivo.
         with open(ruta, 'w', encoding='utf-8') as f:
             f.write(self.reporte)
         print(f"Reporte guardado en: {ruta}")
+
+"""---
+## 5. Ejecucion del Pipeline Multi-Agente
+"""
+
+TARGET_COL = target_col
+PROBLEM_TYPE = problem_type
+TEST_SIZE = 0.2
+RANDOM_STATE = 42
+CV_FOLDS = 5
+
+print("\u2550" * 50)
+print("AGENTE 1: PREPROCESADOR")
+print("\u2550" * 50)
+agente1 = AgentePreprocesador(numeric_strategy='mean', scaler_type='standard')
+X_train, X_test, y_train, y_test, feature_names = agente1.fit_transform(
+    df, TARGET_COL, test_size=TEST_SIZE, random_state=RANDOM_STATE
+)
+
+print("\n" + "\u2550" * 50)
+print("AGENTE 2: ENTRENADOR")
+print("\u2550" * 50)
+agente2 = AgenteEntrenador(problem_type=PROBLEM_TYPE, cv_folds=CV_FOLDS)
+best_model, best_name, all_results = agente2.fit(X_train, X_test, y_train, y_test)
+
+print("\n" + "\u2550" * 50)
+print("AGENTE 3: COMUNICADOR")
+print("\u2550" * 50)
+agente3 = AgenteComunicador(usar_mistral=USAR_MISTRAL, mistral_client=client)
+reporte = agente3.generar_reporte(df, TARGET_COL, agente1, agente2)
+agente3.mostrar_reporte()
+agente3.guardar_reporte("reporte_multiagente.txt")
+
+"""---
+## 6. Preguntas al Dataset (RAG)
+
+El Agente 3 construyo un corpus con todos los resultados. Hace preguntas sobre el dataset y los modelos.
+"""
+
+preguntas = [
+    "Cual fue el mejor modelo y que puntuacion obtuvo?",
+    "Que variables numericas y categoricas tiene el dataset?",
+    "Como se preprocesaron los datos?",
+    "Que tan confiable es el resultado segun las metricas?",
+]
+
+for i, p in enumerate(preguntas, 1):
+    print(f"\n--- Pregunta {i} ---")
+    print(f"P: {p}")
+    print(f"R: {agente3.preguntar(p)}")
+
+"""---
+## 7. Resultados Finales
+
+Ejecuta las celdas en orden. Podes:
+- Cambiar el dataset (CSV, sklearn, etc.)
+- Ajustar hiperparametros de cada agente
+- Agregar mas modelos en `AgenteEntrenador._get_models()`
+- Guardar el modelo entrenado con `joblib.dump(best_model, 'modelo.pkl')`
+"""
