@@ -317,3 +317,151 @@ class AgenteEntrenador:
             lines.append(f"Modelo {r['model_name']}: {metas}.")
         lines.append(f"Mejor modelo: {self.best_model_name} con score {self.best_score}.")
         return ' '.join(lines)
+
+"""---
+## 4. Agente 3 -- Comunicador (RAG)
+
+**Tareas:**
+- Construye un corpus con informacion del dataset y resultados
+- Genera reporte en lenguaje natural
+- Permite hacer preguntas estilo RAG sobre los resultados
+"""
+
+class AgenteComunicador:
+    """Agente 3: Reporte + RAG. Usa Mistral si esta disponible."""
+
+    def __init__(self, usar_mistral=False, mistral_client=None):
+        self.reporte = ""
+        self.usar_mistral = usar_mistral
+        self.mistral_client = mistral_client
+        self.corpus = ""
+
+    def construir_corpus(self, df, target_col, prepro_agent, train_agent):
+        parts = ["=== CORPUS DEL PIPELINE DE ML ==="]
+        parts.append(prepro_agent.get_corpus(df, target_col))
+        parts.append(train_agent.get_corpus())
+        parts.append(f"Cantidad de filas en train: {len(train_agent.results[0]['model'].estimators_ if hasattr(train_agent.results[0]['model'], 'estimators_') else []) if train_agent.results else 0}.")
+        self.corpus = ' '.join(parts)
+        return self.corpus
+
+    def _consulta_mistral(self, pregunta, corpus):
+        prompt = f"""
+Eres un analista de datos. Responde la pregunta del usuario basandote ESTRICTAMENTE en la siguiente informacion.
+Si la respuesta no esta en la info, deci que no tienes datos suficientes.
+
+INFORMACION:
+{corpus}
+
+PREGUNTA: {pregunta}
+RESPUESTA:"""
+        try:
+            res = self.mistral_client.chat.complete(
+                model="mistral-small-latest",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return res.choices[0].message.content
+        except Exception as e:
+            return f"[Error: {e}]"
+
+    def _responder_sin_mistral(self, pregunta, corpus):
+        corpus_lower = corpus.lower()
+        pq_lower = pregunta.lower()
+
+        if "mejor modelo" in pq_lower or "ganador" in pq_lower:
+            idx = corpus.find("Mejor modelo:")
+            if idx >= 0:
+                return corpus[idx:idx+100].split('.')[0] + '.'
+        if "metrica" in pq_lower or "resultado" in pq_lower:
+            idx = corpus.find("Modelos evaluados:")
+            if idx >= 0:
+                return corpus[idx:].split('Mejor')[0].strip() + '.'
+        if "variable" in pq_lower or "columna" in pq_lower or "numerica" in pq_lower:
+            idx = corpus.find("Variables numericas")
+            if idx >= 0:
+                end = corpus.find("Preprocesamiento", idx)
+                return corpus[idx:end].strip()
+        if "nulo" in pq_lower or "falta" in pq_lower:
+            idx = corpus.find("Valores nulos")
+            if idx >= 0:
+                end = corpus.find("Variables", idx)
+                return corpus[idx:end].strip()
+        return "No tengo suficiente informacion para responder eso."
+
+    def preguntar(self, pregunta):
+        if not self.corpus:
+            return "Primero ejecuta generar_reporte() para construir el corpus."
+        if self.usar_mistral and self.mistral_client:
+            return self._consulta_mistral(pregunta, self.corpus)
+        else:
+            return self._responder_sin_mistral(pregunta, self.corpus)
+
+    def _generar_reporte_mistral(self, prepro_report, train_report, corpus):
+        prompt = f"""
+Eres un analista de datos. Genera un reporte claro y profesional en espanol.
+
+INFORMACION:
+{corpus}
+
+Estructura: 1) Preprocesamiento, 2) Entrenamiento, 3) Resumen Ejecutivo.
+"""
+        try:
+            res = self.mistral_client.chat.complete(
+                model="mistral-small-latest",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return res.choices[0].message.content
+        except Exception as e:
+            return f"[Error al generar reporte: {e}]"
+
+    def _generar_reporte_template(self, prepro_report, train_report):
+        lines = ["=" * 55, "REPORTE FINAL DEL PIPELINE MULTI-AGENTE", "=" * 55]
+        num_f = prepro_report['num_features'] or []
+        cat_f = prepro_report['cat_features'] or []
+        lines.append("\n[Agente 1 - Preprocesador]")
+        lines.append("-" * 35)
+        lines.append(f"Estrategia de imputacion numerica: {prepro_report['numeric_strategy']}")
+        lines.append(f"Tipo de escalado: {prepro_report['scaler']}")
+        lines.append(f"Variables numericas ({len(num_f)}): {', '.join(num_f) if num_f else 'ninguna'}")
+        lines.append(f"Variables categoricas ({len(cat_f)}): {', '.join(cat_f) if cat_f else 'ninguna'}")
+        lines.append("Resultado: Dataset limpio, sin nulos, escalado y codificado.")
+        lines.append("\n[Agente 2 - Entrenador]")
+        lines.append("-" * 35)
+        lines.append(f"Tipo de problema: {train_report['problem_type'].capitalize()}")
+        lines.append(f"Validacion cruzada: {train_report['cv_folds']} folds")
+        lines.append(f"Modelos evaluados: {len(train_report['results'])}")
+        lines.append("")
+        lines.append("Resultados por modelo:")
+        for r in train_report['results']:
+            m = r['metrics']
+            metas = ', '.join([f"{k}={v}" for k, v in m.items() if k not in ('cv_mean', 'cv_std')])
+            cv = f"CV(mean={m['cv_mean']}, std={m['cv_std']})" if m.get('cv_mean') is not None else "CV: N/A"
+            lines.append(f"  - {r['model_name']}: {metas} | {cv}")
+        best = train_report['best']
+        lines.append(f"\n=> MODELO SELECCIONADO: {best['model_name']} con score {best['score']}")
+        lines.append("\n[Resumen Ejecutivo]")
+        lines.append("-" * 35)
+        var_count = len(num_f) + len(cat_f)
+        rec = "usar este modelo en produccion" if best['score'] > 0.8 else "explorar mas modelos o realizar feature engineering"
+        lines.append(f"Se procesaron {var_count} variables. El mejor modelo fue {best['model_name']} con rendimiento {best['score']}. Se recomienda {rec}.")
+        lines.append("\n" + "=" * 55)
+        lines.append("FIN DEL REPORTE")
+        lines.append("=" * 55)
+        return "\n".join(lines)
+
+    def generar_reporte(self, df, target_col, prepro_agent, train_agent):
+        self.construir_corpus(df, target_col, prepro_agent, train_agent)
+        prepro_report = prepro_agent.get_report()
+        train_report = train_agent.get_report()
+        if self.usar_mistral and self.mistral_client:
+            self.reporte = self._generar_reporte_mistral(prepro_report, train_report, self.corpus)
+        else:
+            self.reporte = self._generar_reporte_template(prepro_report, train_report)
+        return self.reporte
+
+    def mostrar_reporte(self):
+        print(self.reporte)
+
+    def guardar_reporte(self, ruta="reporte_multiagente.txt"):
+        with open(ruta, 'w', encoding='utf-8') as f:
+            f.write(self.reporte)
+        print(f"Reporte guardado en: {ruta}")
