@@ -126,3 +126,90 @@ print(df.dtypes)
 df = convertir_columnas(df)
 print("\n\u2022 Columnas despues de conversion:")
 print(df.dtypes)
+
+"""---
+## 2. Agente 1 -- Preprocesador
+
+**Tareas:**
+- Normalizar / escalar numericas
+- Imputar valores nulos
+- Codificar variables categoricas
+- Separar features y target
+- Devolver `X_train, X_test, y_train, y_test` limpios
+"""
+
+class AgentePreprocesador:
+    """Agente 1: Normaliza, imputa, escala y codifica."""
+
+    def __init__(self, numeric_strategy='mean', scaler_type='standard'):
+        self.numeric_strategy = numeric_strategy
+        self.scaler_type = scaler_type
+        self.preprocessor = None
+        self.numeric_cols = None
+        self.categorical_cols = None
+
+    def fit_transform(self, df, target_col, test_size=0.2, random_state=42):
+        X = df.drop(columns=[target_col])
+        y = df[target_col]
+
+        self.numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
+        self.categorical_cols = X.select_dtypes(include=['object', 'category']).columns.tolist()
+
+        print(f"\u2022 Numericas detectadas: {self.numeric_cols}")
+        print(f"\u2022 Categoricas detectadas: {self.categorical_cols}")
+
+        numeric_transformer = Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy=self.numeric_strategy)),
+            ('scaler', StandardScaler() if self.scaler_type == 'standard' else MinMaxScaler())
+        ])
+
+        categorical_transformer = Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy='most_frequent')),
+            ('encoder', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+        ])
+
+        transformers = []
+        if self.numeric_cols:
+            transformers.append(('num', numeric_transformer, self.numeric_cols))
+        if self.categorical_cols:
+            transformers.append(('cat', categorical_transformer, self.categorical_cols))
+
+        self.preprocessor = ColumnTransformer(transformers, remainder='drop')
+
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state)
+
+        X_train_processed = self.preprocessor.fit_transform(X_train)
+        X_test_processed = self.preprocessor.transform(X_test)
+
+        feature_names = []
+        if self.numeric_cols:
+            feature_names.extend(self.numeric_cols)
+        if self.categorical_cols:
+            encoder = self.preprocessor.named_transformers_['cat'].named_steps['encoder']
+            feature_names.extend(encoder.get_feature_names_out(self.categorical_cols))
+
+        X_train_processed = pd.DataFrame(X_train_processed, columns=feature_names)
+        X_test_processed = pd.DataFrame(X_test_processed, columns=feature_names)
+
+        print(f"\u2022 X_train: {X_train_processed.shape}, X_test: {X_test_processed.shape}")
+        return X_train_processed, X_test_processed, y_train, y_test, feature_names
+
+    def get_report(self):
+        return {
+            'numeric_strategy': self.numeric_strategy,
+            'scaler': self.scaler_type,
+            'num_features': self.numeric_cols,
+            'cat_features': self.categorical_cols,
+            'dataset_shape': None
+        }
+
+    def get_corpus(self, df, target_col):
+        rows, cols = df.shape
+        nulos = df.isnull().sum().sum()
+        text = f"Dataset con {rows} filas y {cols} columnas. "
+        text += f"Columna objetivo: {target_col}. "
+        text += f"Valores nulos totales: {nulos}. "
+        text += f"Variables numericas ({len(self.numeric_cols)}): {', '.join(self.numeric_cols)}. "
+        text += f"Variables categoricas ({len(self.categorical_cols)}): {', '.join(self.categorical_cols)}. "
+        text += f"Preprocesamiento: imputacion con {self.numeric_strategy}, escalado {self.scaler_type}, codificacion one-hot."
+        return text
