@@ -213,3 +213,107 @@ class AgentePreprocesador:
         text += f"Variables categoricas ({len(self.categorical_cols)}): {', '.join(self.categorical_cols)}. "
         text += f"Preprocesamiento: imputacion con {self.numeric_strategy}, escalado {self.scaler_type}, codificacion one-hot."
         return text
+
+"""---
+## 3. Agente 2 -- Entrenador
+
+**Tareas:**
+- Validacion cruzada
+- Entrenar multiples modelos
+- Seleccionar el mejor segun metricas
+- Devolver modelo + metricas
+"""
+
+class AgenteEntrenador:
+    """Agente 2: Valida, entrena y selecciona el mejor modelo."""
+
+    def __init__(self, problem_type='classification', cv_folds=5):
+        self.problem_type = problem_type
+        self.cv_folds = cv_folds
+        self.results = []
+        self.best_model = None
+        self.best_model_name = None
+        self.best_score = None
+
+    def _get_models(self):
+        if self.problem_type == 'classification':
+            return {
+                'Logistic Regression': LogisticRegression(max_iter=1000, random_state=42),
+                'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42),
+                'SVM': SVC(kernel='rbf', probability=True, random_state=42),
+            }
+        else:
+            return {
+                'Linear Regression': LinearRegression(),
+                'Ridge': Ridge(alpha=1.0, random_state=42),
+                'Lasso': Lasso(alpha=0.1, random_state=42),
+                'Random Forest': RandomForestRegressor(n_estimators=100, random_state=42),
+                'SVR': SVR(kernel='rbf'),
+            }
+
+    def _calc_metrics(self, y_true, y_pred):
+        metrics = {}
+        if self.problem_type == 'classification':
+            metrics['accuracy'] = round(accuracy_score(y_true, y_pred), 4)
+            metrics['precision'] = round(precision_score(y_true, y_pred, average='weighted', zero_division=0), 4)
+            metrics['recall'] = round(recall_score(y_true, y_pred, average='weighted', zero_division=0), 4)
+            metrics['f1_score'] = round(f1_score(y_true, y_pred, average='weighted', zero_division=0), 4)
+        else:
+            metrics['mse'] = round(mean_squared_error(y_true, y_pred), 4)
+            metrics['rmse'] = round(np.sqrt(metrics['mse']), 4)
+            metrics['mae'] = round(mean_absolute_error(y_true, y_pred), 4)
+            metrics['r2'] = round(r2_score(y_true, y_pred), 4)
+        return metrics
+
+    def fit(self, X_train, X_test, y_train, y_test):
+        models_dict = self._get_models()
+
+        for name, model in models_dict.items():
+            print(f"\n\u25b6 Entrenando {name}...")
+            try:
+                cv_scores = cross_val_score(model, X_train, y_train, cv=self.cv_folds, scoring='accuracy' if self.problem_type == 'classification' else 'r2')
+                cv_mean = round(cv_scores.mean(), 4)
+                cv_std = round(cv_scores.std(), 4)
+            except Exception as e:
+                print(f"  CV fallo: {e}")
+                cv_mean, cv_std = None, None
+
+            model.fit(X_train, y_train)
+            y_pred = model.predict(X_test)
+            metrics = self._calc_metrics(y_test, y_pred)
+            metrics['cv_mean'] = cv_mean
+            metrics['cv_std'] = cv_std
+
+            self.results.append({'model_name': name, 'metrics': metrics, 'model': model})
+            print(f"  CV mean: {cv_mean} | Test metrics: {metrics}")
+
+        self._select_best()
+        return self.best_model, self.best_model_name, self.results
+
+    def _select_best(self):
+        key = 'f1_score' if self.problem_type == 'classification' else 'r2'
+        best = max(self.results, key=lambda r: r['metrics'].get(key, -np.inf))
+        self.best_model = best['model']
+        self.best_model_name = best['model_name']
+        self.best_score = best['metrics'][key]
+        print(f"\n{'='*50}")
+        print(f"MEJOR MODELO: {self.best_model_name} ({key}={self.best_score})")
+        print(f"{'='*50}")
+
+    def get_report(self):
+        report = {'problem_type': self.problem_type, 'cv_folds': self.cv_folds, 'results': [], 'best': {}}
+        for r in self.results:
+            report['results'].append({'model_name': r['model_name'], 'metrics': r['metrics']})
+        report['best'] = {'model_name': self.best_model_name, 'score': self.best_score}
+        return report
+
+    def get_corpus(self):
+        lines = [f"Tipo de problema: {self.problem_type}."]
+        lines.append(f"Validacion cruzada: {self.cv_folds} folds.")
+        lines.append(f"Modelos evaluados: {len(self.results)}.")
+        for r in self.results:
+            m = r['metrics']
+            metas = ', '.join([f"{k}={v}" for k, v in m.items() if k not in ('cv_mean', 'cv_std')])
+            lines.append(f"Modelo {r['model_name']}: {metas}.")
+        lines.append(f"Mejor modelo: {self.best_model_name} con score {self.best_score}.")
+        return ' '.join(lines)
